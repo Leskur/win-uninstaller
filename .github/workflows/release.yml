@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $install) { throw "Visual Studio with MSBuild was not found." }
+          $vcvars = Join-Path $install "VC\Auxiliary\Build\vcvars64.bat"
+          cmd /c "`"$vcvars`" && msbuild WinUninstaller.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:m"
+          if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $exe = "Output/Release/x64/WinUninstaller.exe"
+          if (-not (Test-Path $exe)) { throw "Build output not found: $exe" }
+          $version = $env:GITHUB_REF_NAME -replace '^v(?=\d)', ''
+          $asset = "WinUninstaller-$version.exe"
+          Copy-Item $exe $asset
+          gh release create $env:GITHUB_REF_NAME `
+            --repo $env:GITHUB_REPOSITORY `
+            --title $env:GITHUB_REF_NAME `
+            --generate-notes `
+            --verify-tag `
+            $asset
